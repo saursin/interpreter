@@ -8,40 +8,15 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
+
 #define ANSI_ERASELINE "\33[2K\r"
+#define ANSI_CLEARSCREEN "\033[2J"
+
 const std::string WHITESPACE = " \n\r\t\f\v";
-
-
-typedef int (*Func_callback)(std::string s);
-typedef int (*Func_help)(std::string s);
-typedef std::vector<std::string> (*Func_complete)(std::string s);
-
-struct Command
-{
-    std::string name;
-    Func_callback fn_ptr_callback;
-    Func_help fn_ptr_help;
-    Func_complete fn_ptr_complete;
-    
-    Command(std:: string name, Func_callback fn_ptr_callback, Func_help fn_ptr_help=NULL, Func_complete fn_ptr_complete=NULL):
-        name(name),
-        fn_ptr_callback(fn_ptr_callback), 
-        fn_ptr_help(fn_ptr_help),
-        fn_ptr_complete(fn_ptr_complete)
-    {}
-
-    Command(const char name[], Func_callback fn_ptr_callback, Func_help fn_ptr_help=NULL, Func_complete fn_ptr_complete=NULL):
-        name(name),
-        fn_ptr_callback(fn_ptr_callback), 
-        fn_ptr_help(fn_ptr_help),
-        fn_ptr_complete(fn_ptr_complete)
-    {}
-};
-
 
 struct Line
 {
-    std::string line;
+    std::string text;
     std::vector<std::string> tokens;
 
     static std::string lStrip(const std::string& s)
@@ -72,7 +47,7 @@ struct Line
         line = strip(line);
 
         Line l;
-        l.line = line;
+        l.text = line;
 
         if (line.length() == 0)
             return l;
@@ -91,6 +66,11 @@ struct Line
     	return l;
     }
 
+    void parse()
+    {
+        tokens = parse_line(text).tokens;
+    }
+
     void print()
     {
         std::cout << "[";
@@ -105,6 +85,46 @@ struct Line
 };
 
 
+typedef int (*Func_callback)(Line s);
+typedef std::string (*Func_help)(Line s);
+typedef std::vector<std::string> (*Func_complete)(Line s);
+
+
+int fn_clear(Line l)
+{
+    std::cout << ANSI_CLEARSCREEN;
+    return 0;
+}
+
+std::string help_clear(Line l)
+{
+    return "Clear screen\n";
+}
+
+struct Command
+{
+    std::string name;
+    std::string alias;
+    Func_callback fn_ptr_callback;
+    Func_help fn_ptr_help;
+    Func_complete fn_ptr_complete;
+    
+    Command(std:: string name, Func_callback fn_ptr_callback, Func_help fn_ptr_help=NULL, Func_complete fn_ptr_complete=NULL):
+        name(name),
+        fn_ptr_callback(fn_ptr_callback), 
+        fn_ptr_help(fn_ptr_help),
+        fn_ptr_complete(fn_ptr_complete)
+    {}
+
+    Command(const char name[], Func_callback fn_ptr_callback, Func_help fn_ptr_help=NULL, Func_complete fn_ptr_complete=NULL):
+        name(name),
+        fn_ptr_callback(fn_ptr_callback), 
+        fn_ptr_help(fn_ptr_help),
+        fn_ptr_complete(fn_ptr_complete)
+    {}
+};
+
+
 class Interpreter
 {
 protected:
@@ -115,84 +135,89 @@ protected:
     std::vector<Command> commands;
     std::vector<std::string> history;
     bool exit = false;
-    
+
+public:
     //////////////////////////////////////////////
     // init
-    static int fn_help(std::string s)
+    Interpreter()
     {
-        Command * cmd = NULL;       
-        for(auto x = commands.begin(); x!= commands.end(); x++)
+        add_command(Command("clear", &fn_clear, &help_clear));
+    }
+
+    Command * find_cmd(std::string c)
+    {
+        Command * x = nullptr;
+        for(unsigned i=0; i<commands.size(); i++)
         {
-            if(x->name == line.tokens[0])
+            if(commands[i].name == c)
             {
-                cmd = &(*x);
+                x = &commands[i];
                 break;
+            }
+        }
+        return x;
+    }
+
+    void add_command(Command cmd)
+    {
+        Command * cmd_ptr = this->find_cmd(cmd.name);
+        if(cmd_ptr)
+        {
+            std::cout << "InitError: can't add command \"" << cmd.name << "\"; command already exists" << std::endl;
+            return;
+        }
+        commands.push_back(cmd);
+    }
+
+    int help_command(Line line)
+    {
+        if(line.tokens.size()==1)
+        {
+            // print command help
+            printf(" Alias Command               Description\n");
+            printf("--------------------------------------------------------\n");
+            printf("  %-3s  %-20s  %s\n", "?", "help", "Show command help");
+            printf("  %-3s  %-20s  %s\n", "q", "quit", "Quit");
+            for (auto c = commands.begin(); c!=commands.end(); c++)
+            {
+                std::string command_help = "---";
+
+                if( c->fn_ptr_help)
+                {
+                    command_help = c->fn_ptr_help(line);
+
+                    // crop till first newline
+                    size_t found = command_help.find("\n");
+                    if (found != std::string::npos)
+                        command_help = command_help.substr(0, found);
+                }
+                printf("  %-3s  %-20s  %s\n", c->alias.c_str(), c->name.c_str(), command_help.c_str());
+            }
+        }
+        else 
+        {
+            // print command specific help
+            if(line.tokens[1] == "help")
+                std::cout << "  Print help for specified command\n\t help [command]" << std::endl;
+            else
+            {
+                Command * cmd = find_cmd(line.tokens[1]);
+                if(cmd)
+                {
+                    if(cmd->fn_ptr_help)
+                        std::cout << cmd->fn_ptr_help(line) << std::endl;
+                    else
+                        std::cout << "Help not available for command: \"" << line.tokens[1] <<"\""<< std::endl;
+                }
+                else
+                    std::cout << "Help not available for command \"" << line.tokens[1] << "\"; command doesn't exist" << std::endl;
             }
         }
         return 0;
     }
 
-    static int help_help(std::string s)
-    {
-        std::cout <<  "print available commands" << std::endl;
-        return 0;
-    }
-
-    Interpreter()
-    {
-        add_command(Command("help", &fn_help, &help_help));
-    }
-
-    void add_command(Command cmd)
-    {
-        commands.push_back(cmd);
-    }
-
-
-
     ///////////////////////////////////////////////
     // Runtime
-
-    // static char* completion_generator(const char* text, int state) {
-    // // This function is called with state=0 the first time; subsequent calls are
-    // // with a nonzero state. state=0 can be used to perform one-time
-    // // initialization for this completion session.
-    // static std::vector<std::string> matches;
-    // static size_t match_index = 0;
-
-    // if (state == 0) {
-    //     // During initialization, compute the actual matches for 'text' and keep
-    //     // them in a static vector.
-    //     matches.clear();
-    //     match_index = 0;
-
-    //     // Collect a vector of matches: vocabulary words that begin with text.
-    //     std::string textstr = std::string(text);
-    //     for (auto word : vocabulary) {
-    //     if (word.size() >= textstr.size() &&
-    //         word.compare(0, textstr.size(), textstr) == 0) {
-    //         matches.push_back(word);
-    //     }
-    //     }
-    // }
-
-    // if (match_index >= matches.size()) {
-    //     // We return nullptr to notify the caller no more matches are available.
-    //     return nullptr;
-    // } else {
-    //     // Return a malloc'd char* for the match. The caller frees it.
-    //     return strdup(matches[match_index++].c_str());
-    // }
-    // }
-
-    // static char** completer(const char* text, int start, int end) {
-    //     // Don't do filename completion even if our generator finds no matches.
-    //     rl_attempted_completion_over = 1;
-
-    //     // Note: returning nullptr here will make readline use the default filename
-    //     // completer.
-    //     return rl_completion_matches(text, completion_generator);
-    // }
 
     virtual void pre_loop()
     {}
@@ -213,8 +238,16 @@ protected:
    
     int execute_cmd(Line line)
     {
-        if (line.line.length() == 0)
+        if (line.text.length() == 0)
             return 0;
+
+        // check if quit command
+        if (line.tokens[0] == "q" || line.tokens[0] == "quit")
+            return 1;
+
+        // check if help command
+        if (line.tokens[0] == "?" || line.tokens[0] == "help")
+            return help_command(line);
 
         // find command
         Command * cmd = NULL;       
@@ -236,7 +269,7 @@ protected:
         bool rv;
         try
         {
-            rv = cmd->fn_ptr_callback(line.line);
+            rv = cmd->fn_ptr_callback(line);
         }
         catch(const std::exception& e)
         {
@@ -279,12 +312,11 @@ public:
             // parse & execute command
             inp = pre_cmd(inp);
             Line line = Line::parse_line(inp, comment_sym);
-            line.print();
             cmd_ret_val = execute_cmd(line);
             cmd_ret_val = post_cmd(cmd_ret_val, line);
 
             // check return value
-            if (cmd_ret_val > 1)
+            if (cmd_ret_val > 0)
                 break;
         }
 
